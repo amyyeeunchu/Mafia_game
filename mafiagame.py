@@ -48,6 +48,10 @@ active_input = False
 current_player_index = 0
 round_counter = 1
 
+# Emotion classifier
+emotion_classifier = pipeline("text-classification", model="j-hartmann/emotion-english-distilroberta-base")
+
+
 # Dynamic placeholder values
 placeholder_values = {
     'place': ["home", "the clinic", "the park", "my apartment", "the bakery", "the square"],
@@ -83,9 +87,33 @@ response_templates = {
     }
 }
 
-def display_text(text, x, y, color=BLACK):
-    text_surface = font.render(text, True, color)
-    screen.blit(text_surface, (x, y))
+def analyze_emotion(text):
+    result = emotion_classifier(text)
+    if result and isinstance(result, list):
+        return result[0]['label']
+    return "neutral"
+
+
+def display_text(text, x, y, color=BLACK, max_width=760, line_height=40):
+    words = text.split(' ')
+    lines = []
+    current_line = ''
+
+    for word in words:
+        test_line = current_line + word + ' '
+        if font.size(test_line)[0] <= max_width:
+            current_line = test_line
+        else:
+            lines.append(current_line)
+            current_line = word + ' '
+
+    if current_line:
+        lines.append(current_line)
+
+    for i, line in enumerate(lines):
+        text_surface = font.render(line.strip(), True, color)
+        screen.blit(text_surface, (x, y + i * line_height))
+
 
 def categorize_question(question):
     q = question.lower()
@@ -104,64 +132,102 @@ def fill_placeholders(text):
             text = text.replace(f"{{{key}}}", random.choice(options))
     return text
 
-def generate_dynamic_response(player, question):
+def generate_dynamic_response(player, question, emotion='neutral'):
     role = players[player]
     category = categorize_question(question)
     response_pool = response_templates[role].get(category, response_templates[role]['general'])
+
+    if emotion == 'anger':
+        response_pool += ["Why are you so aggressive?", "Calm down, I’m just trying to help."]
+    elif emotion == 'joy':
+        response_pool += ["You seem cheerful about this.", "Glad to see some positivity."]
+    elif emotion == 'sadness':
+        response_pool += ["You seem upset. I'm sorry.", "It's a hard time for all of us."]
 
     part1 = random.choice(["Honestly,", "Well,", "To be honest,", ""])
     part2 = fill_placeholders(random.choice(response_pool))
     part3 = random.choice(["That's all I can say.", "Hope that helps.", "", "I’m not sure what else to add."])
 
     response = " ".join(part for part in [part1, part2, part3] if part).strip()
-    discussion_log.append(f"{player}: {response}")
+    discussion_log.append(f"{response}")
     return response
+
 
 def show_log():
     scroll = 0
     running = True
 
-    VISIBLE_ENTRIES = 10
-    SCROLLBAR_X = 780  # Right-side scrollbar
+    VISIBLE_HEIGHT = 400
+    ENTRY_SPACING = 10
+    LINE_HEIGHT = 30
+    MAX_WIDTH = 740
+
+    SCROLLBAR_X = 780
     SCROLLBAR_Y = 60
     SCROLLBAR_WIDTH = 10
-    SCROLLBAR_HEIGHT = 400
+    SCROLLBAR_HEIGHT = VISIBLE_HEIGHT
 
     while running:
         screen.fill(WHITE)
         display_text("Discussion Log", 20, 20, BLUE)
 
-        # Draw discussion log entries
-        for i, log_entry in enumerate(discussion_log[scroll:scroll + VISIBLE_ENTRIES]):
-            display_text(log_entry, 20, 60 + i * 40)
+        y_offset = 60
+        lines_displayed = 0
+        wrapped_entries = []
 
-        # Draw instruction
+        # Pre-wrap all log entries
+        for entry in discussion_log:
+            words = entry.split(' ')
+            line = ''
+            lines = []
+            for word in words:
+                test_line = line + word + ' '
+                if font.size(test_line)[0] <= MAX_WIDTH:
+                    line = test_line
+                else:
+                    lines.append(line)
+                    line = word + ' '
+            if line:
+                lines.append(line)
+
+            wrapped_entries.append(lines)
+
+        # Flattened view for scrolling
+        flat_lines = []
+        for entry in wrapped_entries:
+            for line in entry:
+                flat_lines.append(line.strip())
+
+        total_lines = len(flat_lines)
+        max_scroll = max(0, total_lines - VISIBLE_HEIGHT // LINE_HEIGHT)
+        visible_lines = flat_lines[scroll:scroll + VISIBLE_HEIGHT // LINE_HEIGHT]
+
+        for line in visible_lines:
+            text_surface = font.render(line, True, BLACK)
+            screen.blit(text_surface, (20, y_offset))
+            y_offset += LINE_HEIGHT
+
+        # Instructions and scrollbar
         display_text("Press ESC to return", 20, 550, RED)
 
-        # Draw scrollbar track
-        pygame.draw.rect(screen, (200, 200, 200), (SCROLLBAR_X, SCROLLBAR_Y, SCROLLBAR_WIDTH, SCROLLBAR_HEIGHT))
-
-        # Draw scrollbar thumb if needed
-        total_entries = len(discussion_log)
-        if total_entries > VISIBLE_ENTRIES:
-            thumb_height = max(SCROLLBAR_HEIGHT * VISIBLE_ENTRIES // total_entries, 20)
-            max_scroll = total_entries - VISIBLE_ENTRIES
+        pygame.draw.rect(screen, GRAY, (SCROLLBAR_X, SCROLLBAR_Y, SCROLLBAR_WIDTH, SCROLLBAR_HEIGHT))
+        if total_lines > VISIBLE_HEIGHT // LINE_HEIGHT:
+            thumb_height = max(SCROLLBAR_HEIGHT * (VISIBLE_HEIGHT // LINE_HEIGHT) // total_lines, 20)
             thumb_pos = SCROLLBAR_Y + (SCROLLBAR_HEIGHT - thumb_height) * scroll // max_scroll
             pygame.draw.rect(screen, (100, 100, 100), (SCROLLBAR_X, thumb_pos, SCROLLBAR_WIDTH, thumb_height))
 
         pygame.display.update()
 
-        # Event handling
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
-                exit()
+                sys.exit()
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
                 elif event.key == pygame.K_UP and scroll > 0:
                     scroll -= 1
-                elif event.key == pygame.K_DOWN and scroll + VISIBLE_ENTRIES < total_entries:
+                elif event.key == pygame.K_DOWN and scroll < max_scroll:
                     scroll += 1
 
 
@@ -304,69 +370,74 @@ def night_phase():
 
 
 def play_game():
-    global user_input, active_input, current_player_index, round_counter
+    global user_input, active_input, round_counter
 
     input_box = pygame.Rect(20, 140, 760, 40)
 
     while True:
-        screen.fill(WHITE)
+        # Get all alive players
+        alive_player_indices = [i for i, alive in enumerate(player_status) if alive]
 
-        # Get the current player (only alive players)
-        current_player = player_names[current_player_index]
-        while not player_status[current_player_index]:
-            current_player_index = (current_player_index + 1) % len(player_names)
-        current_player = player_names[current_player_index]
+        for current_player_index in alive_player_indices:
+            current_player = player_names[current_player_index]
+            answered = False  # Flag to ensure player answers before moving on
 
-        display_text(f"Round {round_counter}", 20, 20, BLUE)
-        display_text(f"Investigate {current_player}", 20, 60, BLACK)
+            while not answered:
+                screen.fill(WHITE)
+                display_text(f"Round {round_counter}", 20, 20, BLUE)
+                display_text(f"Investigate {current_player}", 20, 60, BLACK)
 
-        pygame.draw.rect(screen, BLUE if active_input else BLACK, input_box, 2)
-        display_text(user_input, input_box.x + 10, input_box.y + 5, BLACK)
+                pygame.draw.rect(screen, BLUE if active_input else BLACK, input_box, 2)
+                display_text(user_input, input_box.x + 10, input_box.y + 5, BLACK)
 
-        log_button_rect = pygame.Rect(20, 500, 160, 50)
-        pygame.draw.rect(screen, BLUE, log_button_rect)
-        display_text("View Log", log_button_rect.x + 20, log_button_rect.y + 10, WHITE)
+                # Log button
+                log_button_rect = pygame.Rect(20, 500, 160, 50)
+                pygame.draw.rect(screen, BLUE, log_button_rect)
+                display_text("View Log", log_button_rect.x + 20, log_button_rect.y + 10, WHITE)
 
-        pygame.display.update()
-        events = pygame.event.get()
+                pygame.display.update()
+                events = pygame.event.get()
 
-        for event in events:
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                active_input = input_box.collidepoint(event.pos)
-                if log_button_rect.collidepoint(event.pos):
-                    show_log()
-            elif event.type == pygame.KEYDOWN:
-                if active_input:
-                    if event.key == pygame.K_RETURN:
-                        question = user_input.strip()
-                        discussion_log.append(f"{current_player}: {question}")
-                        response = generate_dynamic_response(current_player, question)
+                for event in events:
+                    if event.type == pygame.QUIT:
+                        pygame.quit()
+                        sys.exit()
 
-                        screen.fill(WHITE)
-                        display_text(f"Q: {question}", 20, 100, BLACK)
-                        display_text(f"{current_player}'s response:", 20, 160, BLACK)
-                        display_text(f"A: {response}", 20, 200, BLUE)
-                        pygame.display.update()
-                        wait_for_continue_button()
+                    elif event.type == pygame.MOUSEBUTTONDOWN:
+                        active_input = input_box.collidepoint(event.pos)
+                        if log_button_rect.collidepoint(event.pos):
+                            show_log()
 
-                        user_input = ''
-                        current_player_index += 1
+                    elif event.type == pygame.KEYDOWN:
+                        if active_input:
+                            if event.key == pygame.K_RETURN and user_input.strip():
+                                question = user_input.strip()
+                                emotion = analyze_emotion(question)
+                                discussion_log.append(f"{current_player}: {question}")
+                                response = generate_dynamic_response(current_player, question, emotion)
 
-                        if current_player_index >= len(player_names):
-                            accusation_phase() # accused person dies
-                            night_phase()  # Mafia kills during night phase
-                            current_player_index = 0 # reset player order
-                            round_counter += 1
+                                screen.fill(WHITE)
+                                display_text(f"Q: {question}", 20, 100, BLACK)
+                                display_text(f"{current_player}'s response:", 20, 160, BLACK)
+                                display_text(f"A: {response}", 20, 200, BLUE)
+                                pygame.display.update()
 
-                    elif event.key == pygame.K_BACKSPACE:
-                        user_input = user_input[:-1]
-                    else:
-                        user_input += event.unicode
+                                wait_for_continue_button()
+                                user_input = ''
+                                answered = True  # Move to next player
 
-        clock.tick(30)
+                            elif event.key == pygame.K_BACKSPACE:
+                                user_input = user_input[:-1]
+                            else:
+                                user_input += event.unicode
+
+                clock.tick(30)
+
+        # After questioning all alive players
+        accusation_phase()
+        night_phase()
+        round_counter += 1
+
 
 if __name__ == "__main__":
     play_game()
