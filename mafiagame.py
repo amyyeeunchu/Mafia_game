@@ -1,6 +1,7 @@
 import random
 import pygame
 import sys
+from transformers import pipeline
 
 # Initialize Pygame
 pygame.init()
@@ -14,6 +15,7 @@ WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 BLUE = (0, 0, 255)
 RED = (255, 0, 0)
+GRAY = (200, 200, 200)
 
 # Fonts
 font = pygame.font.Font(None, 36)
@@ -31,6 +33,8 @@ players = {
 }
 player_names = list(players.keys())
 
+player_status = [True] * len(player_names)  # Track if a player is alive
+
 # Debug: print roles
 print("DEBUG - Player roles:")
 for name, role in players.items():
@@ -44,29 +48,36 @@ active_input = False
 current_player_index = 0
 round_counter = 1
 
-# Response templates
+# Dynamic placeholder values
+placeholder_values = {
+    'place': ["home", "the clinic", "the park", "my apartment", "the bakery", "the square"],
+    'activity': ["reading", "watching TV", "resting", "working", "playing games"],
+    'sound': ["footsteps", "a door creaking", "a scream", "muffled voices"]
+}
+
+# Flexible response templates
 response_templates = {
     'Mafia': {
-        'alibi': ["I was just home alone.", "Nowhere special, just chilling."],
-        'observation': ["I didn't see anyone.", "It was too dark to notice anything."],
+        'alibi': ["I was at {place}.", "Just {activity} all night."],
+        'observation': ["I didn’t see anyone, it was dark.", "I heard {sound}, but couldn’t tell where it came from."],
         'accusation': ["Why are you blaming me?", "This is ridiculous!"],
         'general': ["I don’t know what to say.", "I can’t help you with that."]
     },
     'Townspeople': {
-        'alibi': ["I was at home with my dog.", "Just reading. Quiet night."],
-        'observation': ["I saw Blake near the market.", "Someone walked by, not sure who."],
+        'alibi': ["I was home with my dog.", "Just {activity}, nothing special."],
+        'observation': ["I saw someone near {place}.", "I heard {sound} late at night."],
         'accusation': ["I’m innocent!", "Why would I do that?"],
         'general': ["Sorry, I don’t know anything.", "That’s confusing to me too."]
     },
     'Doctor': {
         'alibi': ["I was at the clinic.", "I was making rounds at the hospital."],
-        'observation': ["I didn’t see much. It was a quiet night.", "I heard some footsteps outside."],
+        'observation': ["I didn’t see much. It was a quiet night.", "I heard {sound} outside."],
         'accusation': ["I'm a doctor! Why would I be involved in this?", "Stop accusing me!"],
         'general': ["I don't have all the details.", "I can't say much."]
     },
     'Detective': {
-        'alibi': ["I was investigating last night.", "I was checking out some leads."],
-        'observation': ["I saw something suspicious near the bakery.", "I observed people coming and going."],
+        'alibi': ["I was investigating near {place}.", "I was checking out some leads."],
+        'observation': ["I saw someone near {place}.", "I observed people coming and going."],
         'accusation': ["I have more information than you think.", "Don’t question me!"],
         'general': ["I don’t have any new leads.", "I’ll keep an eye on things."]
     }
@@ -78,36 +89,69 @@ def display_text(text, x, y, color=BLACK):
 
 def categorize_question(question):
     q = question.lower()
-    if any(word in q for word in ['where', 'location', 'go', 'doing', 'last night', 'yesterday']):
+    if any(word in q for word in ['where', 'location', 'go', 'doing', 'last night', 'yesterday', 'were you']):
         return 'alibi'
     elif any(word in q for word in ['see', 'hear', 'notice', 'watch', 'who']):
         return 'observation'
-    elif any(word in q for word in ['why', 'lying', 'suspicious', 'truth', 'hide']):
+    elif any(word in q for word in ['why', 'lying', 'suspicious', 'truth', 'hid', 'accus']):
         return 'accusation'
     else:
         return 'general'
+
+def fill_placeholders(text):
+    for key, options in placeholder_values.items():
+        if f"{{{key}}}" in text:
+            text = text.replace(f"{{{key}}}", random.choice(options))
+    return text
 
 def generate_dynamic_response(player, question):
     role = players[player]
     category = categorize_question(question)
     response_pool = response_templates[role].get(category, response_templates[role]['general'])
-    response = random.choice(response_pool)
+
+    part1 = random.choice(["Honestly,", "Well,", "To be honest,", ""])
+    part2 = fill_placeholders(random.choice(response_pool))
+    part3 = random.choice(["That's all I can say.", "Hope that helps.", "", "I’m not sure what else to add."])
+
+    response = " ".join(part for part in [part1, part2, part3] if part).strip()
     discussion_log.append(f"{player}: {response}")
     return response
 
 def show_log():
     scroll = 0
     running = True
+
+    VISIBLE_ENTRIES = 10
+    SCROLLBAR_X = 780  # Right-side scrollbar
+    SCROLLBAR_Y = 60
+    SCROLLBAR_WIDTH = 10
+    SCROLLBAR_HEIGHT = 400
+
     while running:
         screen.fill(WHITE)
         display_text("Discussion Log", 20, 20, BLUE)
 
-        for i, log_entry in enumerate(discussion_log[scroll:scroll + 10]):
+        # Draw discussion log entries
+        for i, log_entry in enumerate(discussion_log[scroll:scroll + VISIBLE_ENTRIES]):
             display_text(log_entry, 20, 60 + i * 40)
 
+        # Draw instruction
         display_text("Press ESC to return", 20, 550, RED)
+
+        # Draw scrollbar track
+        pygame.draw.rect(screen, (200, 200, 200), (SCROLLBAR_X, SCROLLBAR_Y, SCROLLBAR_WIDTH, SCROLLBAR_HEIGHT))
+
+        # Draw scrollbar thumb if needed
+        total_entries = len(discussion_log)
+        if total_entries > VISIBLE_ENTRIES:
+            thumb_height = max(SCROLLBAR_HEIGHT * VISIBLE_ENTRIES // total_entries, 20)
+            max_scroll = total_entries - VISIBLE_ENTRIES
+            thumb_pos = SCROLLBAR_Y + (SCROLLBAR_HEIGHT - thumb_height) * scroll // max_scroll
+            pygame.draw.rect(screen, (100, 100, 100), (SCROLLBAR_X, thumb_pos, SCROLLBAR_WIDTH, thumb_height))
+
         pygame.display.update()
 
+        # Event handling
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
@@ -117,8 +161,9 @@ def show_log():
                     running = False
                 elif event.key == pygame.K_UP and scroll > 0:
                     scroll -= 1
-                elif event.key == pygame.K_DOWN and scroll + 10 < len(discussion_log):
+                elif event.key == pygame.K_DOWN and scroll + VISIBLE_ENTRIES < total_entries:
                     scroll += 1
+
 
 def wait_for_continue_button():
     button_rect = pygame.Rect(600, 500, 160, 50)
@@ -131,9 +176,131 @@ def wait_for_continue_button():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
+            elif event.type == pygame.KEYDOWN:
+                if active_input:
+                    if event.key == pygame.K_RETURN:
+                        return
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if button_rect.collidepoint(event.pos):
-                    return  # Exit when the button is clicked
+                    return
+
+
+def accusation_phase():
+    accused = None
+    buttons = []
+    button_y = 150
+
+    # Filter out dead players
+    alive_players = [name for name in player_names if player_status[player_names.index(name)]]
+
+    for name in alive_players:
+        btn_rect = pygame.Rect(100, button_y, 600, 40)
+        buttons.append((btn_rect, name))
+        button_y += 60
+
+    log_button_rect = pygame.Rect(20, 500, 160, 50)  # Log button rectangle
+    while accused is None:
+        screen.fill(WHITE)
+        display_text("Accusation Phase", 20, 20, RED)
+        display_text("Click on a player to accuse them.", 20, 70, BLACK)
+        pygame.draw.rect(screen, BLUE, log_button_rect)  # Draw the log button
+        display_text("View Log", log_button_rect.x + 20, log_button_rect.y + 10, WHITE)
+
+        # Draw the accusation buttons for each player
+        for rect, name in buttons:
+            pygame.draw.rect(screen, GRAY, rect)
+            display_text(name, rect.x + 10, rect.y + 5)
+
+        pygame.display.update()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                # Check if the log button is clicked
+                if log_button_rect.collidepoint(event.pos):
+                    show_log()
+                # Check if any player accusation button is clicked
+                for rect, name in buttons:
+                    if rect.collidepoint(event.pos):
+                        accused = name
+
+    # Check if the accused player is the Mafia
+    if players[accused] == 'Mafia':
+        # The player wins if they correctly accused the Mafia
+        discussion_log.append(f"{accused} was accused and revealed to be: Mafia. You win!")
+        screen.fill(WHITE)
+        display_text(f"Congratulations! {accused} was the Mafia. You win!", 20, 150, BLUE)
+        pygame.display.update()
+        pygame.time.delay(3000)  # Wait a few seconds before exiting
+        pygame.quit()
+        sys.exit()
+
+    # If the accused is not Mafia, they are killed
+    player_status[player_names.index(accused)] = False
+    discussion_log.append(f"{accused} was accused wrongly and has been killed.")
+    
+    screen.fill(WHITE)
+    display_text(f"{accused} was wrongly accused!", 20, 150, RED)
+    display_text(f"{accused} has been killed.", 20, 200, RED)
+    pygame.display.update()
+    pygame.time.delay(2000)  # Wait for 2 seconds to show the death message
+
+    # Proceed with the next round or night phase
+    wait_for_continue_button()
+
+
+
+def mafia_kills():
+    alive_civilians = [i for i in range(len(player_names)) if player_names[i] != "Mafia" and player_status[i]]
+    if alive_civilians:
+        civilian_to_kill = random.choice(alive_civilians)  # Mafia kills a random civilian
+        player_status[civilian_to_kill] = False
+        print(f"{player_names[civilian_to_kill]} has been killed by the mafia.")
+        return civilian_to_kill
+    return None
+
+
+def check_end_game():
+    # Check if only 2 players are left
+    alive_players = [i for i, status in enumerate(player_status) if status]
+    if len(alive_players) == 1:
+        if "You" in [player_names[i] for i in alive_players]:
+            print("You lost! The mafia defeated you.")
+        else:
+            print("You won! You survived.")
+        pygame.quit()
+        sys.exit()
+
+
+def night_phase():
+    screen.fill(WHITE)
+    display_text("Night phase begins...", 20, 100, BLACK)
+    pygame.display.update()
+    pygame.time.delay(1000)  # Wait for 1 second to show the night phase message
+
+    # Mafia kills one civilian
+    killed_player = mafia_kills()
+
+    # Display who was killed
+    if killed_player is not None:
+        screen.fill(WHITE)
+        display_text(f"{player_names[killed_player]} has been killed by the mafia.", 20, 100, RED)
+        pygame.display.update()
+        pygame.time.delay(2000)  # Wait for 2 seconds to show the death message
+
+    # Show alive players
+    alive_players = [player_names[i] for i in range(len(player_names)) if player_status[i]]
+    screen.fill(WHITE)
+    display_text("Alive players:", 20, 200, BLACK)
+    for i, player in enumerate(alive_players):
+        display_text(f"{i + 1}. {player}", 20, 240 + i * 30, BLACK)
+
+    pygame.display.update()
+    pygame.time.delay(2000)  # Wait for 2 seconds to show the alive players
+
+    check_end_game()
 
 
 def play_game():
@@ -144,17 +311,22 @@ def play_game():
     while True:
         screen.fill(WHITE)
 
+        # Get the current player (only alive players)
         current_player = player_names[current_player_index]
+        while not player_status[current_player_index]:
+            current_player_index = (current_player_index + 1) % len(player_names)
+        current_player = player_names[current_player_index]
+
         display_text(f"Round {round_counter}", 20, 20, BLUE)
         display_text(f"Investigate {current_player}", 20, 60, BLACK)
 
-        # Input box
         pygame.draw.rect(screen, BLUE if active_input else BLACK, input_box, 2)
         display_text(user_input, input_box.x + 10, input_box.y + 5, BLACK)
-       # Draw View Log button
+
         log_button_rect = pygame.Rect(20, 500, 160, 50)
         pygame.draw.rect(screen, BLUE, log_button_rect)
         display_text("View Log", log_button_rect.x + 20, log_button_rect.y + 10, WHITE)
+
         pygame.display.update()
         events = pygame.event.get()
 
@@ -173,7 +345,6 @@ def play_game():
                         discussion_log.append(f"{current_player}: {question}")
                         response = generate_dynamic_response(current_player, question)
 
-                        # Display the response briefly
                         screen.fill(WHITE)
                         display_text(f"Q: {question}", 20, 100, BLACK)
                         display_text(f"{current_player}'s response:", 20, 160, BLACK)
@@ -183,9 +354,13 @@ def play_game():
 
                         user_input = ''
                         current_player_index += 1
+
                         if current_player_index >= len(player_names):
-                            current_player_index = 0
+                            accusation_phase() # accused person dies
+                            night_phase()  # Mafia kills during night phase
+                            current_player_index = 0 # reset player order
                             round_counter += 1
+
                     elif event.key == pygame.K_BACKSPACE:
                         user_input = user_input[:-1]
                     else:
