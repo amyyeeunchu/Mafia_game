@@ -10,6 +10,23 @@ screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Mafia Game")
 clock = pygame.time.Clock()
 
+# List of image file paths 
+avatar_paths = [
+    r'c:\Users\juicy\OneDrive\Desktop\avatar1.png',
+    r'c:\Users\juicy\OneDrive\Desktop\avatar2.png',
+    r'c:\Users\juicy\OneDrive\Desktop\avatar3.png',
+    r'c:\Users\juicy\OneDrive\Desktop\avatar4.png',
+    r'c:\Users\juicy\OneDrive\Desktop\avatar5.png',
+]
+
+# Load and scale avatars
+avatars = []
+avatar_size = (100, 100)
+for path in avatar_paths:
+    img = pygame.image.load(path)
+    img = pygame.transform.scale(img, avatar_size)
+    avatars.append(img)
+
 # Colors
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -31,7 +48,17 @@ players = {
     'Dana': roles[3],
     'Elliot': roles[4]
 }
+
 player_names = list(players.keys())
+
+# Map players to their avatar images
+player_avatars = {
+    'Alex': avatars[0],
+    'Blake': avatars[1],
+    'Casey': avatars[2],
+    'Dana': avatars[3],
+    'Elliot': avatars[4]
+}
 
 player_status = [True] * len(player_names)  # Track if a player is alive
 
@@ -170,6 +197,7 @@ def show_log():
     while running:
         screen.fill(WHITE)
         display_text("Discussion Log", 20, 20, BLUE)
+
 
         y_offset = 60
         lines_displayed = 0
@@ -336,8 +364,10 @@ def check_end_game():
             print("You lost! The mafia defeated you.")
         else:
             print("You won! You survived.")
-        pygame.quit()
-        sys.exit()
+        pygame.time.delay(2000)
+        main_menu()
+        return
+
 
 
 def night_phase():
@@ -384,8 +414,12 @@ def play_game():
 
             while not answered:
                 screen.fill(WHITE)
+                
                 display_text(f"Round {round_counter}", 20, 20, BLUE)
                 display_text(f"Investigate {current_player}", 20, 60, BLACK)
+
+                if current_player in player_avatars:
+                    screen.blit(player_avatars[current_player], (600, 20))  # Position top-right
 
                 pygame.draw.rect(screen, BLUE if active_input else BLACK, input_box, 2)
                 display_text(user_input, input_box.x + 10, input_box.y + 5, BLACK)
@@ -438,6 +472,60 @@ def play_game():
         night_phase()
         round_counter += 1
 
+def reset_game():
+    global player_status, discussion_log, question_history, user_input, active_input, current_player_index, round_counter
+
+    player_status = [True] * len(player_names)
+    discussion_log = []
+    question_history = {player: [] for player in players}
+    user_input = ''
+    active_input = False
+    current_player_index = 0
+    round_counter = 1
+
+    # Shuffle roles again for new game (optional)
+    new_roles = ['Mafia', 'Townspeople', 'Townspeople', 'Doctor', 'Detective']
+    random.shuffle(new_roles)
+    for i, name in enumerate(players):
+        players[name] = new_roles[i]
+
+    # Debug print
+    print("DEBUG - New player roles:")
+    for name, role in players.items():
+        print(f"{name}: {role}")
+
+
+def main_menu():
+    while True:
+        screen.fill(WHITE)
+        display_text("Welcome to Mafia Game", 250, 100, BLUE)
+
+        # Buttons
+        start_button = pygame.Rect(300, 250, 200, 60)
+        quit_button = pygame.Rect(300, 350, 200, 60)
+
+        pygame.draw.rect(screen, BLUE, start_button)
+        display_text("Start Game", start_button.x + 40, start_button.y + 15, WHITE)
+
+        pygame.draw.rect(screen, RED, quit_button)
+        display_text("Quit", quit_button.x + 70, quit_button.y + 15, WHITE)
+
+        pygame.display.update()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if start_button.collidepoint(event.pos):
+                    reset_game()
+                    play_game()
+                    return
+                elif quit_button.collidepoint(event.pos):
+                    pygame.quit()
+                    sys.exit()
+
 
 if __name__ == "__main__":
-    play_game()
+    main_menu()
+
